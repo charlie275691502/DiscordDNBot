@@ -10,32 +10,32 @@ dotenv.config();
 const commands = [
   new SlashCommandBuilder()
     .setName("黑名單")
-    .setDescription("ID 與事項管理")
+    .setDescription("校欸管理")
     .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
     .addSubcommand((sub) =>
       sub
-        .setName("add")
-        .setDescription("新增項目")
+        .setName("新增")
+        .setDescription("新增校欸")
         .addStringOption((opt) =>
-          opt.setName("id").setDescription("ID / 名字").setRequired(true),
+          opt.setName("id").setDescription("ID").setRequired(true),
         )
         .addStringOption((opt) =>
-          opt.setName("note").setDescription("事項").setRequired(true),
+          opt.setName("note").setDescription("事蹟").setRequired(true),
         ),
     )
     .addSubcommand((sub) =>
       sub
-        .setName("delete")
-        .setDescription("刪除指定 ID")
+        .setName("刪除")
+        .setDescription("刪除校欸")
         .addStringOption((opt) =>
           opt.setName("id").setDescription("要刪除的 ID").setRequired(true),
         ),
     )
-    .addSubcommand((sub) => sub.setName("list").setDescription("列出所有記錄"))
+    .addSubcommand((sub) => sub.setName("清單").setDescription("列出所有校欸"))
     .addSubcommand((sub) =>
       sub
-        .setName("get")
-        .setDescription("精確查找特定 ID")
+        .setName("查找")
+        .setDescription("查找特定校欸")
         .addStringOption((opt) =>
           opt.setName("id").setDescription("欲查詢的 ID").setRequired(true),
         ),

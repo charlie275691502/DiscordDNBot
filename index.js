@@ -30,10 +30,8 @@ const supabase = createClient(
 );
 
 // 讀取環境變數設定的白名單（支援逗號分隔多個 ID）
-const ALLOWED_CHANNELS = (process.env.ALLOWED_CHANNEL_IDS || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
+const COMMAND_CHANNEL_ID = process.env.COMMAND_CHANNEL_ID?.trim() || "";
+const SCAN_CHANNEL_ID = process.env.SCAN_CHANNEL_ID?.trim() || "";
 
 client.once("ready", () => {
   console.log(`🤖 機器人已上線：${client.user.tag}`);
@@ -41,16 +39,14 @@ client.once("ready", () => {
 
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== "黑名單") return;
 
-  // 1. 權限檢驗
-  const isAllowedChannel =
-    ALLOWED_CHANNELS.length === 0 ||
-    ALLOWED_CHANNELS.includes(interaction.channelId);
+  // 檢查主指令名稱
+  if (interaction.commandName !== "校欸") return;
 
-  if (!isAllowedChannel) {
+  // 限制僅在指定頻道使用
+  if (COMMAND_CHANNEL_ID && interaction.channelId !== COMMAND_CHANNEL_ID) {
     return interaction.reply({
-      content: "❌ 你沒有在此頻道使用此指令的權限。",
+      content: `❌ 指令僅限在 <#${COMMAND_CHANNEL_ID}> 頻道使用。`,
       ephemeral: true,
     });
   }
@@ -79,7 +75,7 @@ client.on("interactionCreate", async (interaction) => {
         throw error;
       }
       return interaction.editReply(
-        `✅ 已成功新增：\n• **ID**：\`${id}\`\n• **事項**：${note}\n• **回報者**：${reporter}`,
+        `✅ 已成功新增：\n• **ID**：\`${id}\`\n• **事蹟**：${note}\n• **回報者**：${reporter}`,
       );
     }
 
@@ -131,7 +127,7 @@ client.on("interactionCreate", async (interaction) => {
         .setTitle(`📄 查詢結果：${record.id}`)
         .setColor(0x3498db)
         .addFields(
-          { name: "事項", value: record.note, inline: false },
+          { name: "事蹟", value: record.note, inline: false },
           { name: "回報者", value: record.reporter, inline: true },
           { name: "加入時間", value: createdAtFormatted, inline: true },
         );
@@ -191,14 +187,7 @@ client.on("messageCreate", async (message) => {
     return;
   }
 
-  const isAllowedChannel =
-    ALLOWED_CHANNELS.length === 0 ||
-    ALLOWED_CHANNELS.includes(message.channelId);
-
-  if (!isAllowedChannel) {
-    console.log(
-      `[Filter] 訊息不在允許的頻道名單中 (頻道 ID: ${message.channelId})，已略過`,
-    );
+  if (SCAN_CHANNEL_ID && message.channelId !== SCAN_CHANNEL_ID) {
     return;
   }
 
@@ -306,7 +295,7 @@ client.on("messageCreate", async (message) => {
         });
         alertEmbed.addFields({
           name: `⚠️ ID: ${target.id}`,
-          value: `**事項**：${target.note}\n**通報人**：${target.reporter} (${time})`,
+          value: `**事蹟**：${target.note}\n**通報人**：${target.reporter} (${time})`,
           inline: false,
         });
       });
