@@ -218,25 +218,37 @@ client.on("messageCreate", async (message) => {
     "🔍 正在壓縮並掃描截圖中的 ID，請稍候...",
   );
 
+  console.log(`\n================== [開始處理截圖] ==================`);
+  console.log(`[觸發訊息 ID]: ${message.id}`);
+  console.log(`[發送者]: ${message.author.tag} (${message.author.id})`);
+  console.log(`[圖片名稱]: ${imageAttachment.name}`);
+  console.log(`[圖片原始大小]: ${(imageAttachment.size / 1024).toFixed(2)} KB`);
+
   try {
-    // 1. 先下載原圖至記憶體 Buffer
+    // 1. 下載圖片
+    console.log(`[步驟 1] 正在下載圖片 Buffer...`);
     const imageResponse = await axios.get(imageAttachment.url, {
       responseType: "arraybuffer",
     });
     const originalBuffer = Buffer.from(imageResponse.data);
 
-    // 2. 使用 sharp 進行最佳化壓縮（限制最大寬度 1600px，轉成 80% JPEG，大小通常只有 200~400KB）
+    // 2. 使用 sharp 壓縮
+    console.log(`[步驟 2] 使用 sharp 壓縮為 JPEG...`);
     const compressedBuffer = await sharp(originalBuffer)
       .resize({ width: 1600, withoutEnlargement: true })
       .jpeg({ quality: 80 })
       .toBuffer();
+    console.log(
+      `[步驟 2 完成] 壓縮後大小: ${(compressedBuffer.length / 1024).toFixed(2)} KB`,
+    );
 
-    // 3. 轉為 Base64 Data URL 傳送給 OCR.Space（免費版支援 base64Image 欄位）
+    // 3. 轉為 Base64 呼叫 OCR.Space
+    console.log(`[步驟 3] 呼叫 OCR.Space API 辨識文字中...`);
     const base64Image = `data:image/jpeg;base64,${compressedBuffer.toString("base64")}`;
 
     const formData = new FormData();
     formData.append("base64Image", base64Image);
-    formData.append("language", "cht"); // 繁體中文（包含英數）
+    formData.append("language", "cht");
     formData.append("isOverlayRequired", "false");
     formData.append("scale", "true");
 
@@ -248,46 +260,103 @@ client.on("messageCreate", async (message) => {
           ...formData.getHeaders(),
           apikey: process.env.OCR_SPACE_API_KEY || "helloworld",
         },
-        timeout: 20000,
+        timeout: 25000,
       },
     );
 
     const parsedResults = ocrResponse.data?.ParsedResults;
     if (!parsedResults || parsedResults.length === 0) {
-      await scanningMsg.edit("⚠️ 截圖模糊或未解析到文字，跳過比對。");
-      setTimeout(() => scanningMsg.delete().catch(() => {}), 4000);
+      console.warn(`[OCR 結果] ⚠️ 無法解析到任何結果或回傳為空。`);
+      console.log(`================== [處理結束: 無文字] ==================\n`);
+      await scanningMsg.edit("⚠️ 截圖模糊或未解析到文字，請提供更清晰的圖片。");
       return;
     }
 
     const rawText = parsedResults[0].ParsedText || "";
+
+    // 取得圖片中切開的單字/行列表並印出
+    const detectedWordsList = rawText
+      .split(/\r?\n|\s+/)
+      .map((w) => w.trim())
+      .filter((w) => w.length > 0);
+
+    console.log(
+      `\n--- [OCR 辨識出的字串列表 (${detectedWordsList.length} 項)] ---`,
+    );
+    console.log(detectedWordsList);
+    console.log(`--------------------------------------------------\n`);
+
+    // 清洗全文用於包含比對
     const cleanOcrText = rawText.toLowerCase().replace(/\s+/g, "");
 
-    // 4. 從 Supabase 取黑名單並比對
+    // 4. 從 Supabase 取黑名單
+    console.log(`[步驟 4] 讀取 Supabase 黑名單資料庫...`);
     const { data: records, error } = await supabase
       .from("records")
       .select("id, note, reporter, created_at");
 
-    if (error) throw error;
+    if (error) {
+      console.error(`[資料庫錯誤] 讀取 records 失敗:`, error);
+      throw error;
+    }
+
     if (!records || records.length === 0) {
-      await scanningMsg.delete().catch(() => {});
+      console.log(`[比對略過] 目前資料庫為空，無任何黑名單項目可供比對。`);
+      console.log(`================== [處理結束: 名單空] ==================\n`);
+      await scanningMsg.edit("📋 目前資料庫內尚無任何黑名單紀錄。");
       return;
     }
 
+    console.log(
+      `[比對中] 資料庫共有 ${records.length} 筆黑名單 ID，開始掃描比對...`,
+    );
+
+    // 5. 進行命中過濾
     const detectedTargets = records.filter((record) => {
       const targetId = record.id.toLowerCase().replace(/\s+/g, "");
       if (targetId.length < 2) return false;
       return cleanOcrText.includes(targetId);
     });
 
+    // 6. 輸出比對結果
     if (detectedTargets.length === 0) {
-      await scanningMsg.edit(
-        "✅ 掃描完畢：截圖中未發現任何黑名單校ㄟ，安全上車！",
+      console.log(
+        `[比對結果] ✅ 安全！未在截圖辨識字串中找到任何名單內的 ID。`,
       );
-      setTimeout(() => scanningMsg.delete().catch(() => {}), 10000);
+      console.log(
+        `================== [處理結束: 安全通報] ==================\n`,
+      );
+
+      const safeEmbed = new EmbedBuilder()
+        .setTitle("✅ 掃描完畢：安全無虞")
+        .setColor(0x2ecc71)
+        .setDescription("截圖中未發現任何黑名單校ㄟ，可以放心上車！")
+        .setFooter({ text: "校ㄟ探測器 • 避雷防線" })
+        .setTimestamp();
+
+      // 直接保留訊息，不再呼叫 setTimeout delete
+      await scanningMsg.edit({
+        content: null,
+        embeds: [safeEmbed],
+      });
     } else {
+      console.warn(
+        `[比對結果] 🚨 抓到 ${detectedTargets.length} 位名單內的可疑對象！`,
+      );
+      detectedTargets.forEach((target, idx) => {
+        console.warn(
+          `   ${idx + 1}. ID: ${target.id} | 事蹟: ${target.note} | 回報者: ${target.reporter}`,
+        );
+      });
+      console.log(
+        `================== [處理結束: 警報觸發] ==================\n`,
+      );
+
       const alertEmbed = new EmbedBuilder()
         .setTitle(`🚨 發現 ${detectedTargets.length} 位名單內的可疑對象！`)
-        .setColor(0xe74c3c);
+        .setColor(0xe74c3c)
+        .setDescription("截圖中偵測到以下紀錄，請隊友提高警覺：")
+        .setTimestamp();
 
       detectedTargets.forEach((target) => {
         const time = new Date(target.created_at).toLocaleDateString("zh-TW", {
@@ -306,11 +375,10 @@ client.on("messageCreate", async (message) => {
       });
     }
   } catch (err) {
-    console.error("OCR 辨識錯誤：", err);
-    await scanningMsg.edit("❌ 截圖辨識過程發生錯誤。");
-    setTimeout(() => scanningMsg.delete().catch(() => {}), 5000);
+    console.error(`[處理異常] 截圖辨識或比對發生錯誤:`, err);
+    console.log(`================== [處理結束: 錯誤中斷] ==================\n`);
+    await scanningMsg.edit("❌ 截圖辨識過程發生錯誤，請稍後再試。");
   } finally {
-    // 3. 處理完畢（或出錯）後移出 Set
     processingMessages.delete(message.id);
   }
 });
