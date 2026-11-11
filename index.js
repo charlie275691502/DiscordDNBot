@@ -1,10 +1,17 @@
 import { Client, GatewayIntentBits, EmbedBuilder } from "discord.js";
 import { createClient } from "@supabase/supabase-js";
+import axios from "axios";
+import FormData from "form-data";
+import sharp from "sharp";
 import dotenv from "dotenv";
 dotenv.config();
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages, // 接收伺服器文字訊息事件
+    GatewayIntentBits.MessageContent, // 讀取訊息內容與附件資訊
+  ],
 });
 
 const supabase = createClient(
@@ -163,6 +170,148 @@ client.on("interactionCreate", async (interaction) => {
   } catch (err) {
     console.error("執行指令錯誤：", err);
     return interaction.editReply("❌ 資料庫操作發生異常，請稍後再試。");
+  }
+});
+
+client.on("messageCreate", async (message) => {
+  console.log(
+    `[Message] 收到訊息 | 頻道 ID: ${message.channelId} | 作者: ${message.author.tag} (${message.author.id})`,
+  );
+
+  if (message.author.bot) {
+    console.log(`[Filter] 略過機器人自己的訊息`);
+    return;
+  }
+
+  const isAllowedChannel =
+    ALLOWED_CHANNELS.length === 0 ||
+    ALLOWED_CHANNELS.includes(message.channelId);
+
+  if (!isAllowedChannel) {
+    console.log(
+      `[Filter] 訊息不在允許的頻道名單中 (頻道 ID: ${message.channelId})，已略過`,
+    );
+    return;
+  }
+
+  console.log(`[Attachments] 訊息附件數量: ${message.attachments.size}`);
+
+  const imageAttachment = message.attachments.find((att) =>
+    att.contentType?.startsWith("image/"),
+  );
+
+  if (!imageAttachment) {
+    console.log(
+      `[Filter] 該訊息未包含圖片格式附件 (contentTypes: ${
+        Array.from(message.attachments.values())
+          .map((a) => a.contentType)
+          .join(", ") || "無"
+      })`,
+    );
+    return;
+  }
+
+  console.log(`[Image Detected] 抓取到圖片附件:
+  • 檔名: ${imageAttachment.name}
+  • 格式: ${imageAttachment.contentType}
+  • 原始大小: ${(imageAttachment.size / 1024).toFixed(2)} KB
+  • 網址: ${imageAttachment.url}`);
+
+  const scanningMsg = await message.reply(
+    "🔍 正在壓縮並掃描截圖中的 ID，請稍候...",
+  );
+
+  try {
+    // 1. 先下載原圖至記憶體 Buffer
+    const imageResponse = await axios.get(imageAttachment.url, {
+      responseType: "arraybuffer",
+    });
+    const originalBuffer = Buffer.from(imageResponse.data);
+
+    // 2. 使用 sharp 進行最佳化壓縮（限制最大寬度 1600px，轉成 80% JPEG，大小通常只有 200~400KB）
+    const compressedBuffer = await sharp(originalBuffer)
+      .resize({ width: 1600, withoutEnlargement: true })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+
+    // 3. 轉為 Base64 Data URL 傳送給 OCR.Space（免費版支援 base64Image 欄位）
+    const base64Image = `data:image/jpeg;base64,${compressedBuffer.toString("base64")}`;
+
+    const formData = new FormData();
+    formData.append("base64Image", base64Image);
+    formData.append("language", "cht"); // 繁體中文（包含英數）
+    formData.append("isOverlayRequired", "false");
+    formData.append("scale", "true");
+
+    const ocrResponse = await axios.post(
+      "https://api.ocr.space/parse/image",
+      formData,
+      {
+        headers: {
+          ...formData.getHeaders(),
+          apikey: process.env.OCR_SPACE_API_KEY || "helloworld",
+        },
+        timeout: 20000,
+      },
+    );
+
+    const parsedResults = ocrResponse.data?.ParsedResults;
+    if (!parsedResults || parsedResults.length === 0) {
+      await scanningMsg.edit("⚠️ 截圖模糊或未解析到文字，跳過比對。");
+      setTimeout(() => scanningMsg.delete().catch(() => {}), 4000);
+      return;
+    }
+
+    const rawText = parsedResults[0].ParsedText || "";
+    const cleanOcrText = rawText.toLowerCase().replace(/\s+/g, "");
+
+    // 4. 從 Supabase 取黑名單並比對
+    const { data: records, error } = await supabase
+      .from("records")
+      .select("id, note, reporter, created_at");
+
+    if (error) throw error;
+    if (!records || records.length === 0) {
+      await scanningMsg.delete().catch(() => {});
+      return;
+    }
+
+    const detectedTargets = records.filter((record) => {
+      const targetId = record.id.toLowerCase().replace(/\s+/g, "");
+      if (targetId.length < 2) return false;
+      return cleanOcrText.includes(targetId);
+    });
+
+    if (detectedTargets.length === 0) {
+      await scanningMsg.edit(
+        "✅ 掃描完畢：截圖中未發現任何黑名單校ㄟ，安全上車！",
+      );
+      setTimeout(() => scanningMsg.delete().catch(() => {}), 10000);
+    } else {
+      const alertEmbed = new EmbedBuilder()
+        .setTitle(`🚨 發現 ${detectedTargets.length} 位名單內的可疑對象！`)
+        .setColor(0xe74c3c);
+
+      detectedTargets.forEach((target) => {
+        const time = new Date(target.created_at).toLocaleDateString("zh-TW", {
+          timeZone: "Asia/Taipei",
+        });
+        alertEmbed.addFields({
+          name: `⚠️ ID: ${target.id}`,
+          value: `**事項**：${target.note}\n**通報人**：${target.reporter} (${time})`,
+          inline: false,
+        });
+      });
+
+      await scanningMsg.edit({
+        content: "⚡ **避雷警報觸發！**",
+        embeds: [alertEmbed],
+      });
+    }
+  } catch (err) {
+    console.error("OCR 辨識錯誤：", err);
+    await scanningMsg.edit("❌ 截圖辨識過程發生錯誤。");
+    setTimeout(() => scanningMsg.delete().catch(() => {}), 5000);
   }
 });
 
