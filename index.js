@@ -4,7 +4,18 @@ import axios from "axios";
 import FormData from "form-data";
 import sharp from "sharp";
 import dotenv from "dotenv";
+import http from "http";
 dotenv.config();
+
+const PORT = process.env.PORT || 10000;
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("Discord Bot is alive!");
+});
+
+server.listen(PORT, () => {
+  console.log(`🌐 Web Server running on port ${PORT}`);
+});
 
 const client = new Client({
   intents: [
@@ -386,5 +397,6 @@ client.on("messageCreate", async (message) => {
     processingMessages.delete(message.id);
   }
 });
-
-client.login(process.env.DISCORD_TOKEN);
+client.login(process.env.DISCORD_TOKEN).catch((err) => {
+  console.error("❌ Discord 登入失敗：", err);
+});
