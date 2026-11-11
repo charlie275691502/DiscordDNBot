@@ -9,7 +9,7 @@ dotenv.config();
 
 const commands = [
   new SlashCommandBuilder()
-    .setName("黑名單")
+    .setName("校欸")
     .setDescription("校欸管理")
     .setDefaultMemberPermissions(PermissionFlagsBits.UseApplicationCommands)
     .addSubcommand((sub) =>
@@ -34,8 +34,8 @@ const commands = [
     .addSubcommand((sub) => sub.setName("清單").setDescription("列出所有校欸"))
     .addSubcommand((sub) =>
       sub
-        .setName("查找")
-        .setDescription("查找特定校欸")
+        .setName("查詢")
+        .setDescription("查詢特定校欸")
         .addStringOption((opt) =>
           opt.setName("id").setDescription("欲查詢的 ID").setRequired(true),
         ),

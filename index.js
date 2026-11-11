@@ -56,7 +56,7 @@ client.on("interactionCreate", async (interaction) => {
 
   try {
     // 新增
-    if (sub === "add") {
+    if (sub === "新增") {
       const id = interaction.options.getString("id").trim();
       const note = interaction.options.getString("note").trim();
       // 取得在該伺服器的暱稱 (nickname)
@@ -80,7 +80,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     // 刪除
-    if (sub === "delete") {
+    if (sub === "刪除") {
       const id = interaction.options.getString("id").trim();
       const { data: deleted, error } = await supabase
         .from("records")
@@ -96,7 +96,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     // 單一查詢
-    if (sub === "get") {
+    if (sub === "查詢") {
       const id = interaction.options.getString("id").trim();
       const { data: record, error } = await supabase
         .from("records")
@@ -135,7 +135,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     // --- 列出全部 ---
-    if (sub === "list") {
+    if (sub === "清單") {
       const { data: records, error } = await supabase
         .from("records")
         .select("id, note, reporter, created_at")
@@ -178,7 +178,10 @@ client.on("messageCreate", async (message) => {
   );
 
   // 1. 如果該則訊息已經在處理中，直接略過
-  if (processingMessages.has(message.id)) return;
+  if (processingMessages.has(message.id)) {
+    console.log(`[Filter] 略過重複觸發`);
+    return;
+  }
   // 2. 標記此訊息已進入處理，避免並行重複觸發
   processingMessages.add(message.id);
 
@@ -300,10 +303,11 @@ client.on("messageCreate", async (message) => {
       throw error;
     }
 
-    if (!records || records.length === 0) {
-      console.log(`[比對略過] 目前資料庫為空，無任何黑名單項目可供比對。`);
-      console.log(`================== [處理結束: 名單空] ==================\n`);
-      await scanningMsg.edit("📋 目前資料庫內尚無任何黑名單紀錄。");
+    if (!records) {
+      console.log(
+        `================== [處理結束: 資料庫不存在] ==================\n`,
+      );
+      await scanningMsg.edit("資料庫不存在");
       return;
     }
 
@@ -330,8 +334,8 @@ client.on("messageCreate", async (message) => {
       const safeEmbed = new EmbedBuilder()
         .setTitle("✅ 掃描完畢：安全無虞")
         .setColor(0x2ecc71)
-        .setDescription("截圖中未發現任何黑名單校ㄟ，可以放心上車！")
-        .setFooter({ text: "校ㄟ探測器 • 避雷防線" })
+        .setDescription("截圖中未發現任何黑名單校欸，可以放心上車！")
+        .setFooter({ text: "校欸探測器 • 避雷防線" })
         .setTimestamp();
 
       // 直接保留訊息，不再呼叫 setTimeout delete
