@@ -173,10 +173,18 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
+// 在 client 外層全域宣告防重 Set
+const processingMessages = new Set();
+
 client.on("messageCreate", async (message) => {
   console.log(
     `[Message] 收到訊息 | 頻道 ID: ${message.channelId} | 作者: ${message.author.tag} (${message.author.id})`,
   );
+
+  // 1. 如果該則訊息已經在處理中，直接略過
+  if (processingMessages.has(message.id)) return;
+  // 2. 標記此訊息已進入處理，避免並行重複觸發
+  processingMessages.add(message.id);
 
   if (message.author.bot) {
     console.log(`[Filter] 略過機器人自己的訊息`);
@@ -312,6 +320,9 @@ client.on("messageCreate", async (message) => {
     console.error("OCR 辨識錯誤：", err);
     await scanningMsg.edit("❌ 截圖辨識過程發生錯誤。");
     setTimeout(() => scanningMsg.delete().catch(() => {}), 5000);
+  } finally {
+    // 3. 處理完畢（或出錯）後移出 Set
+    processingMessages.delete(message.id);
   }
 });
 
